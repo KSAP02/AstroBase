@@ -335,7 +335,7 @@ LLM_PROVIDER=openai
 LLM_MODEL=
 LLM_API_KEY=
 LLM_BASE_URL=
-LLM_REASONING_EFFORT=medium
+LLM_REASONING_EFFORT=low
 DB_PATH=data_warehouse/astrobase.db
 ```
 - `LLM_MODEL`: **`gpt-6-luna`** (chosen 2026-09-28: $0.10 / $0.50 per 1M tokens, supports Structured

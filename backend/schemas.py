@@ -1,13 +1,14 @@
 """Data shapes shared across the backend (Pydantic models).
 
 - Criterion / ScoredCriterion / ScoreResult: what scoring.py works with and returns.
-- CriterionVerdict / Finding / LLMEvaluation: the exact JSON the LLM must return (Step 3).
+- CriterionVerdict / Finding / LLMEvaluation: the exact JSON the LLM must return.
   Field descriptions are sent to the model as part of the JSON schema, so they are written for it.
+- EvaluationRequest / EvaluationOut: the body and response of POST /api/evaluations.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 Tier = Literal["mandatory", "technical", "required", "preferred"]
 Verdict = Literal["met", "partial", "not_met", "not_evidenced", "not_applicable"]
@@ -65,3 +66,25 @@ class LLMEvaluation(BaseModel):
     criteria: list[CriterionVerdict] = Field(description="One entry per criterion id, in order.")
     reasons: list[Finding] = Field(description="Exactly 3 supporting reasons for the score.")
     gaps: list[Finding] = Field(description="Exactly 2 most important gaps or risks.")
+
+
+# ---- API: POST /api/evaluations ------------------------------------------------------------
+
+class EvaluationRequest(BaseModel):
+    rfq_id: str
+    # Whitespace is stripped first, so "   " counts as empty. FastAPI returns 422 if these fail.
+    vendor_text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
+
+
+class EvaluationOut(BaseModel):
+    rfq_id: str
+    vendor_name: str
+    score: int
+    raw_score: int
+    gate_passed: bool
+    breakdown: dict[str, TierScore]
+    criteria: list[ScoredCriterion]
+    reasons: list[Finding]  # always exactly 3
+    gaps: list[Finding]     # always exactly 2
+    model: str
+    prompt_version: str

@@ -151,7 +151,7 @@ talks to our backend, and only the backend talks to OpenAI.
 - **Reasoning effort, not temperature.** Reasoning models have a "think harder / think less" dial
   instead. `gpt-6-luna` accepts `none | low | medium | high | xhigh` (it rejects `minimal`). All five
   levels judged a vague "aligned with aerospace standards" claim as `not_evidenced`. Chose
-  **`LLM_REASONING_EFFORT=medium`** (added to `.env` and `.env.example`); Step 3 compares low vs medium.
+  **`LLM_REASONING_EFFORT=medium`** (added to `.env` and `.env.example`); Step 3 compared low vs medium and switched to **`low`** (same results, faster).
 - **Hidden retries.** LangChain leaves `max_retries` unset, so the OpenAI SDK retries a failed request
   **twice** on its own, which could turn one evaluation into 3 calls. `model.py` sets `max_retries=0`.
   The verified boilerplate is in BUILD_PLAN §7.

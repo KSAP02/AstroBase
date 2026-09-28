@@ -5,6 +5,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from backend import db
+from backend.agents.evaluator import LLMCallError, evaluate_vendor
+from backend.model import LLMConfigError
+from backend.schemas import EvaluationOut, EvaluationRequest
 
 
 @asynccontextmanager
@@ -34,3 +37,20 @@ def get_rfq(rfq_id: str) -> dict:
     if rfq is None:
         raise HTTPException(status_code=404, detail=f"RFQ {rfq_id} not found")
     return rfq
+
+
+@app.post("/api/evaluations")
+def create_evaluation(req: EvaluationRequest) -> EvaluationOut:
+    # FastAPI has already validated the body against EvaluationRequest (422 if invalid).
+    rfq = db.get_rfq(req.rfq_id)
+    if rfq is None:
+        raise HTTPException(status_code=404, detail=f"RFQ {req.rfq_id} not found")
+
+    # Translate failures into clear HTTP errors instead of a 500 with a traceback.
+    try:
+        evaluation, _raw = evaluate_vendor(rfq, req.vendor_text)
+    except LLMConfigError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except LLMCallError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return evaluation

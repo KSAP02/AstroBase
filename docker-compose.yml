@@ -5,8 +5,9 @@ services:
       dockerfile: backend/Dockerfile
     # Secrets arrive at runtime from .env; they are never copied into the image.
     env_file: .env
+    # Host port is overridable if 8000 is busy: BACKEND_PORT=8001 docker compose up --build
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     # The SQLite file lives on the host, so history survives container restarts.
     volumes:
       - ./data_warehouse:/app/data_warehouse
