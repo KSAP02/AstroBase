@@ -22,6 +22,15 @@ What you used and why. One line each.
 How does your agent arrive at a number? What did you do to make that number
 mean something?
 
+**The LLM judges each RFQ line; code computes the number** (`backend/agents/scoring.py`, pure functions, no I/O).
+
+- The LLM returns one verdict per RFQ line (`met / partial / not_met / not_evidenced / not_applicable`), each with a verbatim quote from the vendor profile. It never outputs a score.
+- **Quote check (code):** a `met`/`partial` verdict whose quote isn't actually in the vendor text (after normalising case, whitespace, `±`, quote marks) is downgraded to `not_evidenced`. Lines the model skipped count as `not_evidenced`, not as passes.
+- **Weights:** technical (incl. quantity and delivery) 40, required 35, preferred 25. `met` = 1, `partial` = 0.5, otherwise 0. Each tier scores weight × average over its applicable lines; `not_applicable` lines are excluded, and a tier with none left hands its weight to the others.
+- **Mandatory gate:** mandatory lines carry no points; they're pass/fail. If any isn't `met`, the score is capped at **30** (`GATE_CAP`). A cap rather than zero keeps "strong but missing one certificate" distinguishable from "nothing matches".
+- Every score is explainable: the response carries each line's verdict, quote and a per-tier breakdown (`technical 36/40, required 35/35, preferred 12.5/25`).
+- Checked with hand-made verdicts before any LLM was involved (`experiments/scoring_sanity.py`, 9 cases, all pass). Using real quotes from the sample files: vendor A × RFQ-001 → raw 84, capped to **30**; vendor B × RFQ-001 → **30** with the gate passed.
+
 ---
 
 ## What you built
@@ -77,6 +86,9 @@ them, not whether you did.
 
 The thing you would be least comfortable defending. Be specific — name the
 file or function.
+
+- (Candidate, found in Step 2) `scoring.py` → vendors A and B **both score 30** on RFQ-001 for opposite reasons: A is excellent but uncertified (84 capped to 30), B is certified but can't make the part (earns 30). The number alone can't tell them apart; only `gate_passed` and the breakdown do. `GATE_CAP` and the weights are judgement calls, not derived from data.
+- (Candidate) `quote_found()` checks that a quote exists, not that it's *specific*: a vague but real sentence ("Space-grade heritage.") passes it. The prompt's specificity rule carries that (Step 3).
 
 ---
 
