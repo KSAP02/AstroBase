@@ -20,7 +20,8 @@ The **frontend** is generated in one go and gets a short tour only.
  │  3. CHECK ──────── You answer the step's "explain it back" questions in your own words
  │  4. DRILL ──────── You make one small live change (like the interview), run it, then revert or keep it
  │  5. LOG + COMMIT ─ Update the named BUILD_LOG.md sections, write MD_files/build_logs/step-N-<name>.md
- │                     (detailed explanation of the step), then make the commit listed for the step
+ │                     (detailed explanation + the step's questions WITH written answers),
+ │                     then make the commit listed for the step
  └──────────────────── Next step starts only after you say "go"
 ```
 
@@ -97,7 +98,7 @@ and no `*.db`.
 
 **Build**
 - [ ] `backend/config.py`: `Settings(BaseSettings)` with `llm_provider, llm_model, llm_api_key,
-      llm_base_url, db_path`; `env_file=".env"`; `@lru_cache get_settings()`.
+      llm_base_url, llm_reasoning_effort, db_path`; `env_file=".env"`; `@lru_cache get_settings()`.
 - [ ] `backend/db.py` (stdlib `sqlite3`, `row_factory=sqlite3.Row`): `connect()`, `init_db()`
       (schema §3; creates the parent dir), `seed_rfqs(path) -> tuple[int, int]`, `list_rfqs()`, `get_rfq(rfq_id)`.
 - [ ] `backend/seed.py`: `python -m backend.seed` → prints "Seeded N RFQs (M already present)".
@@ -184,7 +185,10 @@ using hand-made verdicts.
 **Build**
 - [ ] `backend/model.py`: `get_chat_model()`. Clear `LLMConfigError` for a wrong provider, empty key or
       empty model; `langchain_openai` imported inside the function, with `ImportError` turned into a
-      clear message; `ChatOpenAI(model, api_key, base_url or None, temperature=0)`.
+      clear message. Use the **verified boilerplate in BUILD_PLAN §7**:
+      `ChatOpenAI(model, api_key, base_url or None, reasoning_effort, max_retries=0, timeout=120)`.
+      No `temperature` (GPT-6 rejects it); `max_retries=0` keeps it to one call per evaluation.
+      Add `llm_reasoning_effort` to `Settings` in `config.py`.
 - [ ] `backend/prompts/evaluator_system.md` (rubric: verdicts, specificity, exact certificates,
       lower Ra is better, lead-time basis, `not_applicable`, exactly 3 reasons + 2 gaps).
 - [ ] `backend/prompts/evaluator_user.md` (RFQ id/title, `{criteria_block}`, delimited vendor text).

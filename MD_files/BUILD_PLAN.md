@@ -106,7 +106,9 @@ wrong verdicts we find go into `BUILD_LOG.md` as evidence.
 3. **Exact-certificate rule (prompt).** ISO 9001 / IATF 16949 ≠ AS9100D; "accredited partners" ≠ NADCAP.
 4. **Direction rule (prompt).** Smaller tolerance and **lower Ra are better**. LLMs often get this backwards.
 5. **Lead-time basis (prompt).** "4–5 weeks from receipt of material" isn't the same as "6 weeks from PO".
-6. **Temperature 0 + structured output.** The answer comes back as validated JSON with the same shape every time.
+6. **Structured output.** The answer comes back as validated JSON with the same shape every time.
+   (GPT-6 models are reasoning models and reject `temperature=0`; only the default is allowed. So
+   run-to-run stability comes from the design instead: small per-line judgements plus a score computed in code.)
 7. **Every run saves** the raw LLM output, the model name and the prompt version, so any score can be audited later.
 
 ---
@@ -144,7 +146,7 @@ backend/
   config.py          Settings (pydantic-settings) + get_settings(); the only .env reader
   db.py              connect, init_db, seed_rfqs, list_rfqs, get_rfq, insert_evaluation, list_evaluations
   seed.py            `python -m backend.seed`, idempotent (also runs automatically on startup)
-  model.py           get_chat_model() → ChatOpenAI(temperature=0); clear error if key/model missing
+  model.py           get_chat_model() → ChatOpenAI(model, api_key, base_url, reasoning_effort, max_retries=0); clear error if key/model missing
   schemas.py         Pydantic models: API request/response + LLM output schema
   prompts/
     __init__.py      load_prompt(name) -> str, PROMPT_VERSION = "v1"
@@ -333,11 +335,52 @@ LLM_PROVIDER=openai
 LLM_MODEL=
 LLM_API_KEY=
 LLM_BASE_URL=
+LLM_REASONING_EFFORT=medium
 DB_PATH=data_warehouse/astrobase.db
 ```
-- `LLM_MODEL`: any current OpenAI chat model that supports Structured Outputs (json_schema).
+- `LLM_MODEL`: **`gpt-6-luna`** (chosen 2026-09-28: $0.10 / $0.50 per 1M tokens, supports Structured
+  Outputs, passed the Ra and vague-claim traps). Switch to `gpt-6-sol` by editing `.env` if verdicts are weak.
 - `LLM_API_KEY`: your OpenAI key. Following CLAUDE.md §3, it's read only by `config.py` and passed
   to `ChatOpenAI(api_key=...)` in `model.py`.
+- `LLM_BASE_URL`: blank = official OpenAI endpoint. Only set it for Azure, a proxy or an OpenAI-compatible local server.
+- `LLM_REASONING_EFFORT`: `none | low | medium | high | xhigh` (what `gpt-6-luna` accepts; it rejects
+  `minimal`). Blank = model default.
+
+**Verified `model.py` boilerplate** (tested against langchain-openai 1.6.6 + gpt-6-luna):
+```python
+class LLMConfigError(RuntimeError):
+    """The LLM isn't configured; the message says exactly what to fix."""
+
+def get_chat_model():
+    s = get_settings()
+    if s.llm_provider != "openai":
+        raise LLMConfigError(f"LLM_PROVIDER={s.llm_provider!r} is not supported; set LLM_PROVIDER=openai in .env")
+    if not s.llm_api_key:
+        raise LLMConfigError("LLM_API_KEY is empty; set it in .env")
+    if not s.llm_model:
+        raise LLMConfigError("LLM_MODEL is empty; set it in .env (e.g. gpt-6-luna)")
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as e:
+        raise LLMConfigError("langchain-openai is not installed; run pip install -r requirements.txt") from e
+    return ChatOpenAI(
+        model=s.llm_model,
+        api_key=s.llm_api_key,
+        base_url=s.llm_base_url or None,
+        reasoning_effort=s.llm_reasoning_effort or None,
+        max_retries=0,
+        timeout=120,
+    )
+```
+Why each argument:
+- **No `temperature`:** GPT-6 models are reasoning models and return a 400 error for any value other than the default.
+- **`reasoning_effort`** is the dial for reasoning models: how much the model thinks before answering.
+  It's the Chat Completions form; LangChain's `reasoning={"effort": ...}` is the Responses-API form,
+  which we don't need.
+- **`max_retries=0`:** LangChain leaves this as `None`, so the OpenAI SDK's default of **2 automatic
+  retries** applies. That could silently turn one evaluation into 3 API requests and break the SPEC's
+  "one LLM call per evaluation". With 0, a failure surfaces as a clear 502 and the user can click again.
+- **`timeout=120`:** an upper bound so a stuck request can't hang the API forever.
 - `model.py` supports `openai` only for now. Any other provider value raises a clear
   "not implemented, set LLM_PROVIDER=openai" error.
 

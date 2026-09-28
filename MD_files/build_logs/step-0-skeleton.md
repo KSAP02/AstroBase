@@ -112,3 +112,49 @@ BUILD_LOG.md  README.md  CLAUDE.md  project.md
 1. Why is there both a `.gitignore` and a `.dockerignore`?
 2. What would break if `backend/__init__.py` didn't exist?
 3. Where does the OpenAI key go, and which two places must it never reach?
+
+### Answers
+
+**1. `.gitignore` vs `.dockerignore`:** they guard two different exits.
+`.gitignore` controls what **git** tracks, so it stops `.env`, the venv and the DB from reaching
+GitHub. `.dockerignore` controls what **`docker build`** copies into the image (the "build
+context"). Docker doesn't read `.gitignore`. Our backend image is built from the repo root, so
+without `.dockerignore` the `COPY` step could bake `.env` (the API key) into an image layer, and
+anyone with the image could read it. It also keeps the image small by skipping the venv,
+`node_modules` and docs.
+
+**2. Without `backend/__init__.py`:** the file marks `backend/` as a regular Python **package**.
+Python 3 can sometimes import a folder without it (a "namespace package"), but that's fragile:
+behaviour differs between tools, and `python -m backend.seed` or `uvicorn backend.main:app` can fail
+with `ModuleNotFoundError` depending on how they're launched. The same applies to
+`backend/agents/__init__.py` for `from backend.agents.scoring import ...`. An empty file makes it explicit and reliable.
+
+**3. The OpenAI key:** it lives in the root **`.env`** only, as `LLM_API_KEY=...`. Only
+`backend/config.py` reads it, and it's passed to the model client in `backend/model.py`. In Docker it
+arrives at **runtime** through `env_file: .env` in `docker-compose.yml`, never at build time.
+It must never reach: **(a) git/GitHub** (blocked by `.gitignore`) and **(b) a Docker image** (blocked
+by `.dockerignore`). A third place worth naming: **never the frontend or browser**. The browser only
+talks to our backend, and only the backend talks to OpenAI.
+
+---
+
+## Addendum: model choice (done right after the commit)
+
+- Listed the models the key can access (`client.models.list()`), then checked OpenAI's pricing page:
+  `gpt-6-luna` $0.10 / $0.50 per 1M tokens (in/out), `gpt-6-sol` $2 / $10, `gpt-6-astra` $10 / $50.
+- Smoke-tested Luna and Sol with a trap question (Ra 3.2 vs a required Ra 1.6). **Both answered
+  `not_met` correctly; both reject `temperature=0`** (only the default is allowed), so `model.py`
+  won't set temperature.
+- **Chose `LLM_MODEL=gpt-6-luna`.** One evaluation is roughly 2–3k tokens in and 1–2k out, about
+  **$0.001 per evaluation**. If the 9-run check in Step 3 shows wrong verdicts, switching to
+  `gpt-6-sol` is a one-line `.env` change (the point of `model.py` being the single seam).
+- **Reasoning effort, not temperature.** Reasoning models have a "think harder / think less" dial
+  instead. `gpt-6-luna` accepts `none | low | medium | high | xhigh` (it rejects `minimal`). All five
+  levels judged a vague "aligned with aerospace standards" claim as `not_evidenced`. Chose
+  **`LLM_REASONING_EFFORT=medium`** (added to `.env` and `.env.example`); Step 3 compares low vs medium.
+- **Hidden retries.** LangChain leaves `max_retries` unset, so the OpenAI SDK retries a failed request
+  **twice** on its own, which could turn one evaluation into 3 calls. `model.py` sets `max_retries=0`.
+  The verified boilerplate is in BUILD_PLAN §7.
+- `LLM_BASE_URL` stays **blank**. It's only needed for a non-default endpoint (Azure OpenAI, a proxy,
+  or an OpenAI-compatible local server such as Ollama). Blank → `model.py` passes `None` → the SDK
+  uses `https://api.openai.com/v1`.

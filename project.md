@@ -123,7 +123,7 @@ Log each with the assumption made:
 
 **Principle: the LLM judges each requirement; code computes the number.**
 
-One LLM call (forced tool call / structured output), temperature 0, returns:
+One LLM call (forced tool call / structured output; default temperature, since GPT-6 rejects 0), returns:
 - Per RFQ criterion (technical, quantity/delivery, mandatory, required, preferred):
   `verdict: met | partial | not_met | not_evidenced` + short **verbatim evidence quote** from the
   vendor profile + one-line rationale.

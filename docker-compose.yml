@@ -1,0 +1,17 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    # Secrets arrive at runtime from .env; they are never copied into the image.
+    env_file: .env
+    ports:
+      - "8000:8000"
+    # The SQLite file lives on the host, so history survives container restarts.
+    volumes:
+      - ./data_warehouse:/app/data_warehouse
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
