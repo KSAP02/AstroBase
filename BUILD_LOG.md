@@ -99,6 +99,7 @@ how did you fix it?
 - **`temperature=0` rejected by the model.** The plan assumed temperature 0 for repeatable verdicts. A smoke test against `gpt-6-luna` and `gpt-6-sol` returned `400 — 'temperature' does not support 0.0 with this model. Only the default (1) value is supported.` These are reasoning models. Fix: don't pass `temperature`; repeatability comes from the design instead (small per-line judgements, score computed in code).
 - **Prompt v1 let marketing copy earn `partial`.** The first 9-run matrix looked right on scores (vendor C 7–11), but reading the verdicts showed where C's points came from: "multi-axis" → partial 5-axis, "conversion coating to international aerospace specifications" → partial MIL-DTL-5541, "aerospace-grade alloys in a wide range of forms and specifications" → partial AMS 4911. The rubric said vague claims are `not_evidenced`, and the model used `partial` as a loophole. The quote check couldn't catch it (the quotes are real). Fix: prompt **v2** adds "partial needs specific evidence too" with those exact examples. Vendor C went to **0 / 0 / 0**. Both matrices are kept in `experiments/` (`matrix_v1_medium.md`, `matrix_v2_medium.md`).
 - **Frontend build failed on the CSS import.** `tsc` reported `TS2882: Cannot find module or type declarations for side-effect import of './style.css'`. TypeScript doesn't know Vite handles `.css` imports; fixed with the standard `src/vite-env.d.ts` (`/// <reference types="vite/client" />`).
+- **Clean-clone test of the non-Docker path.** Following the README from a fresh `git clone`, the Docker path worked first time (fresh DB seeded, evaluation 30 / raw 81, manual seed command reported "0 RFQs (3 already present)"). The non-Docker run first showed Vite `http proxy error … ECONNREFUSED`. Diagnosis: Node resolves `localhost` to IPv6 `::1` and uvicorn listens only on IPv4 `127.0.0.1`; on retest the failure was mainly my script querying Vite before uvicorn had started. Made it unambiguous anyway: the proxy's default target is now `http://127.0.0.1:8000`, and the README examples use `127.0.0.1`.
 - **Port 8000 already taken.** `docker compose up` failed with "Bind for 0.0.0.0:8000 failed: port is already allocated", and a request to `:8000/api/evaluations` returned a 404 from a *different* app. `docker ps` + `/openapi.json` showed another local project's backend on 8000. Fix: the compose host port is now `${BACKEND_PORT:-8000}` (8000 by default; I run with `BACKEND_PORT=8001` in `.env`). The container still listens on 8000 internally.
 - **"Evidence" wasn't verbatim.** In the same smoke test the model's `evidence` field paraphrased ("Ra 3.2 is rougher than…", with curly quotes) instead of quoting the vendor text. This confirmed the code-side quote check is needed; the prompt must say "copy the exact sentence, nothing else".
 
@@ -110,13 +111,16 @@ We expect you used AI assistants. This section is about how you worked with
 them, not whether you did.
 
 - Which tools you used, and roughly how you split the work with them:
+  - **Claude Code** (terminal agent) for the whole build. It read the candidate pack, wrote the design and step-by-step plans (`MD_files/`), then built one step at a time: code, running it (Docker, curl, the 9-run matrix), a per-step explainer with check questions in `MD_files/build_logs/`, and a commit.
+  - **Me:** the decisions and the review. I chose the stack (FastAPI, SQLite, vanilla TS, OpenAI via LangChain, Docker Compose), the mandatory-gate policy (cap at 30, not zero), the model (after asking for the cheapest capable one to be verified against my key) and the working rhythm: after each backend step, a walkthrough, questions I answered, then the commit. I read the model's verdicts, not just the scores.
 - Something your AI assistant got wrong that you caught and corrected:
-  - The build plan hard-coded `temperature=0` from habit; the model chosen rejects it. Caught by testing the model before writing `model.py`, not by trusting the plan.
+  - The build plan hard-coded `temperature=0` from habit. I questioned it (reasoning models use reasoning effort, not temperature); testing confirmed `gpt-6-luna` rejects `temperature=0` with a 400, and `model.py` now sets `reasoning_effort` instead.
   - Hidden retries: `ChatOpenAI` leaves `max_retries` unset, so the OpenAI SDK's default of 2 automatic retries applies. One evaluation could silently become 3 API calls, breaking the "one LLM call" rule. Set `max_retries=0` explicitly. Found by reading the installed `langchain_openai` source before writing `model.py`.
   - The model's verdicts needed reading, not just the scores. Prompt v1 gave marketing claims `partial` (fixed in v2, see What broke). At `medium` effort it also marked vendor B's "9 to 11 weeks" as `partial` against "6 weeks from PO"; at `low` effort it correctly said `not_met`. Chose `low`: same pattern, 10–14 s per call instead of 14–30 s.
-- Reasoning models use `reasoning_effort` (none/low/medium/high/xhigh for `gpt-6-luna`; `minimal` is rejected), not temperature. Made it an env setting (`LLM_REASONING_EFFORT=medium`).
+  - Reasoning effort values: the plan and LangChain's docstring list `minimal / low / medium / high`; `gpt-6-luna` actually accepts `none / low / medium / high / xhigh` and rejects `minimal`. Tested each value before choosing; it's an env setting (`LLM_REASONING_EFFORT=low`).
   - Model choice: rather than accept a model name from memory, I listed the models my key can access (`client.models.list()`), checked OpenAI's pricing page, and ran a trap question ("Ra 3.2 vs Ra 1.6") on the two candidates. Chose `gpt-6-luna` ($0.10 / $0.50 per 1M tokens; both it and `gpt-6-sol`, 20× the price, got the trap right).
 - Something you decided to write yourself rather than generate, and why:
+  - _TODO (fill in yourself before submitting). Suggested: do one of the scoring drills by hand in `backend/agents/scoring.py` (e.g. make `partial` worth 0.6, or change the gate), predict the result first, run `python experiments/scoring_sanity.py`, and describe what you changed and why here._
 
 ---
 
@@ -125,12 +129,20 @@ them, not whether you did.
 The thing you would be least comfortable defending. Be specific — name the
 file or function.
 
-- (Candidate, found in Step 2) `scoring.py`: with hand-made verdicts, vendors A and B **both scored 30** on RFQ-001 for opposite reasons. With the real model B scores 36–42 and A is capped at 30, so a certified vendor that can't make the part outranks an uncertified one that can. That's the intended policy, but `GATE_CAP` and the weights are judgement calls, not derived from data.
-- (Candidate, found in Step 3) Run-to-run variation: GPT-6 doesn't accept temperature 0, and the same inputs gave B × RFQ-001 36, 42 and 38 across three runs (prompt and effort changes included). Per-line scoring keeps the swing to a few points, but the same vendor can still get a slightly different number on a re-run.
-- (Candidate) `quote_found()` checks that a quote exists, not that it's *specific*: a vague but real sentence ("Space-grade heritage.") passes it. The prompt's specificity rule carries that (Step 3).
+**The verdict quality rests on the prompt, `backend/prompts/evaluator_system.md`, and code can only partly check it.** `scoring.py` can prove a quote exists in the profile (`quote_found()`), but not that the *judgement* on it is right. A real quote with the wrong verdict passes: at `medium` effort vendor B's "9 to 11 weeks" was marked `partial` against "6 weeks from PO"; a vague but real sentence ("Space-grade heritage.") would pass the quote check too. The v1 → v2 fix (vendor C 7–11 → 0) came from *reading* verdicts, and there's no automated check that catches that kind of regression.
+
+Related, also weak:
+- **Run-to-run variation.** GPT-6 doesn't accept temperature 0; vendor B × RFQ-001 scored 36, 42 and 38 across three runs (with prompt/effort changes in between). Per-line scoring limits the swing, but a re-run can give a slightly different number.
+- **The policy numbers are judgement calls.** `TIER_WEIGHTS` (40/35/25) and `GATE_CAP = 30` in `scoring.py` aren't derived from data. With them, certified-but-incapable B (38) outranks capable-but-uncertified A (30, raw 77). That's intended, but defensible only as a stated policy.
+- **`build_criteria()` dedupe is textual.** It catches RFQ-002's "600 mm" duplicate but not RFQ-003's differently worded cut-to-size pair, which counts twice.
 
 ---
 
 ## Next 48 hours
 
 If you had two more days, what is the first thing you would change?
+
+**Turn the 9-run matrix into a labelled evaluation set, so prompt and model changes are measured, not eyeballed.**
+- Hand-label the expected verdict for every requirement line in the 9 vendor × RFQ combinations (vendors A and B on RFQ-001 are already labelled in `experiments/scoring_sanity.py`).
+- A script that runs each combination ~5 times and reports per-line verdict agreement with the labels and the score spread. Every prompt edit (`PROMPT_VERSION`), model or reasoning-effort change then gets a number, and the v1 "marketing earns partial" regression would have been caught automatically.
+- Then, in order: add a few harder vendor profiles (near-miss certificates, mixed evidence); make dedupe semantic (have `build_criteria` flag overlapping lines once per RFQ at seed time instead of by substring); show the raw score in the history list, not only in the result banner.
