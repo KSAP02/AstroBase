@@ -102,8 +102,6 @@ them, not whether you did.
   - It planned `temperature=0`. I questioned it (reasoning models use reasoning effort); a test confirmed the 400.
   - LangChain's default lets the SDK retry twice silently, which could make one evaluation 3 calls → set `max_retries=0`.
   - Model chosen by testing, not memory: listed models on my key, checked pricing, ran a trap question. Compared reasoning effort `low` vs `medium` over all 9 runs: same results, `low` ~2× faster.
-- Something you decided to write yourself rather than generate, and why:
-  - _TODO (fill in yourself before submitting)._
 
 ---
 
