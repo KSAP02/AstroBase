@@ -86,7 +86,7 @@ and what did you do about it?
 Something that did not work first time. What was it, how did you diagnose it,
 how did you fix it?
 
-- **Prompt v1 let marketing copy score.** Scores looked plausible (vendor C 7–11), but reading the verdicts showed `partial` given to phrases like "multi-axis" (for 5-axis). The quote check couldn't catch it because the quotes were real. v2 added "partial needs specific evidence too" → C = 0 on all three RFQs. Both runs are kept in `experiments/`.
+- **Prompt v1 let marketing copy score.** Scores looked plausible (vendor C 7–11), but the assistant's review of the per-line verdicts showed `partial` given to phrases like "multi-axis" (for 5-axis). The quote check couldn't catch it because the quotes were real. v2 added "partial needs specific evidence too" → C = 0 on all three RFQs. Both runs are kept in `experiments/`.
 - **`temperature=0` rejected** (400): GPT-6 models are reasoning models. Removed it; set `reasoning_effort` instead.
 - **Port 8000 taken** by another local project → host port made configurable (`BACKEND_PORT`).
 
@@ -97,11 +97,16 @@ how did you fix it?
 We expect you used AI assistants. This section is about how you worked with
 them, not whether you did.
 
-- Which tools you used, and roughly how you split the work with them: Claude Code wrote the plan, code and per-step explainers (`MD_files/build_logs/`). I made the decisions (stack, gate policy, model, reasoning effort) and reviewed each backend step through a walkthrough and questions before committing.
+- Which tools you used, and roughly how you split the work with them:
+  - **Claude Code** (one session, transcript in `AI_SESSION_TRANSCRIPT.jsonl`) wrote the plans, all the code, the prompts, the test scripts and the docs, ran everything (Docker, the 9-run matrix, a clean-clone test) and analysed the results.
+  - **Me:** I set the project conventions beforehand (`CLAUDE.md`, from an earlier session), chose the stack and asked for Docker Compose, chose the gate policy (cap at 30) from the options offered, asked for the most cost-efficient capable current model (the assistant verified the options against my key), and set the working rhythm: one step per commit, a walkthrough and check questions after each backend step, and a spec audit before the final commit. I then questioned the design until I could explain it (DB initialisation, where the RFQ is flattened, the scoring maths, how the quote check works, why it isn't done by the LLM).
+  - Time: about 2.5 hours from reading the spec to a working app, about 3 hours including README and BUILD_LOG; the rest of the session was studying the code (notes in `MD_files/build_logs/`).
 - Something your AI assistant got wrong that you caught and corrected:
-  - It planned `temperature=0`. I questioned it (reasoning models use reasoning effort); a test confirmed the 400.
-  - LangChain's default lets the SDK retry twice silently, which could make one evaluation 3 calls → set `max_retries=0`.
-  - Model chosen by testing, not memory: listed models on my key, checked pricing, ran a trap question. Compared reasoning effort `low` vs `medium` over all 9 runs: same results, `low` ~2× faster.
+  - The plan assumed `temperature=0`. A smoke test returned a 400, and I pointed out that reasoning models are tuned with reasoning effort, not temperature, so `model.py` sets `reasoning_effort` instead.
+  - I asked for the LangChain model setup to be checked before it was implemented. That check (by the assistant, in the installed source) found the SDK retries twice by default, which could make one evaluation 3 calls → `max_retries=0`.
+  - Not my catch, but worth recording: the assistant chose the model by testing rather than memory (listed the models on my key, checked pricing, ran a trap question) and compared reasoning effort `low` vs `medium` over all 9 runs (same results, `low` ~2× faster).
+- Something you decided to write yourself rather than generate, and why:
+  - No code by hand. When offered the choice for the scoring code, I had the assistant write it and walk me through it line by line instead, because in the timebox I prioritised being able to explain and modify every line in the interview over typing it. What I did decide myself is the scoring policy (cap at 30, not zero) and the constraints the AI worked within (`CLAUDE.md`).
 
 ---
 
@@ -110,7 +115,7 @@ them, not whether you did.
 The thing you would be least comfortable defending. Be specific — name the
 file or function.
 
-**Verdict quality depends on the prompt (`backend/prompts/evaluator_system.md`).** Code can prove a quote exists (`quote_found()` in `scoring.py`) but not that the judgement on it is right, and nothing automated would catch a regression like v1's. I found that one by reading verdicts. Also: scores vary a few points between runs (no temperature 0), and the weights and cap are judgement calls.
+**Verdict quality depends on the prompt (`backend/prompts/evaluator_system.md`).** Code can prove a quote exists (`quote_found()` in `scoring.py`) but not that the judgement on it is right, and nothing automated would catch a regression like v1's; that one was found only by reading the verdicts. Also: scores vary a few points between runs (no temperature 0), and the weights and cap are judgement calls.
 
 ---
 
