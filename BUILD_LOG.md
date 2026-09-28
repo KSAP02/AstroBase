@@ -52,6 +52,14 @@ What works. Be specific.
 - Every evaluation is saved with the vendor text, all verdicts, the raw model output and token usage, the model id and the prompt version (audit trail); `GET /api/evaluations` lists them newest first. History survives restarts (DB on a host volume).
 - `docker compose up --build` runs it; host port configurable via `BACKEND_PORT`.
 
+**Frontend (Vite + vanilla TypeScript, one page)**
+- RFQ dropdown filled from the DB, with the selected RFQ's tiers shown underneath.
+- Vendor profile: paste into the textarea, or upload a `.txt` (read in the browser into the same textarea, so there's one backend input path).
+- **Evaluate** (disabled while empty or running) → score out of 100 (colour-coded), a red banner when a mandatory requirement fails ("capped at 30, would have been 77"), **3 supporting reasons**, **2 gaps**, per-tier bars, and an expandable per-requirement table with each verdict and its quoted evidence.
+- **Past evaluations**, newest first, refreshed after every run; click a row to show it again.
+- API errors (422/404/502/503) appear as a readable message; all vendor/model text is HTML-escaped.
+- Runs as a second Compose service; its dev-server proxy forwards `/api` to `http://backend:8000`, and it starts only once the backend's healthcheck passes.
+
 ---
 
 ## What you skipped
@@ -59,6 +67,10 @@ What works. Be specific.
 What you consciously left out, and why.
 
 - MCP server (was in my starter scaffold) — removed; nothing in the spec needs agents calling into this app, and it would be surface area with no purpose.
+- Frontend framework (React etc.): one form and two lists don't need one. Plain TypeScript + DOM keeps the UI readable in one file.
+- Production frontend build / nginx image: the container runs the Vite dev server on purpose, so the `/api` proxy works identically in and out of Docker with no CORS or second web-server config. Not for deployment, which the spec rules out.
+- Tests / CI: out of scope per the spec. The scoring rules are checked by `experiments/scoring_sanity.py` and model behaviour by the 9-combination matrix instead.
+- Styling beyond legible, auth, pagination of history (latest 20 shown), editing or deleting RFQs.
 
 ---
 
@@ -86,6 +98,7 @@ how did you fix it?
 
 - **`temperature=0` rejected by the model.** The plan assumed temperature 0 for repeatable verdicts. A smoke test against `gpt-6-luna` and `gpt-6-sol` returned `400 — 'temperature' does not support 0.0 with this model. Only the default (1) value is supported.` These are reasoning models. Fix: don't pass `temperature`; repeatability comes from the design instead (small per-line judgements, score computed in code).
 - **Prompt v1 let marketing copy earn `partial`.** The first 9-run matrix looked right on scores (vendor C 7–11), but reading the verdicts showed where C's points came from: "multi-axis" → partial 5-axis, "conversion coating to international aerospace specifications" → partial MIL-DTL-5541, "aerospace-grade alloys in a wide range of forms and specifications" → partial AMS 4911. The rubric said vague claims are `not_evidenced`, and the model used `partial` as a loophole. The quote check couldn't catch it (the quotes are real). Fix: prompt **v2** adds "partial needs specific evidence too" with those exact examples. Vendor C went to **0 / 0 / 0**. Both matrices are kept in `experiments/` (`matrix_v1_medium.md`, `matrix_v2_medium.md`).
+- **Frontend build failed on the CSS import.** `tsc` reported `TS2882: Cannot find module or type declarations for side-effect import of './style.css'`. TypeScript doesn't know Vite handles `.css` imports; fixed with the standard `src/vite-env.d.ts` (`/// <reference types="vite/client" />`).
 - **Port 8000 already taken.** `docker compose up` failed with "Bind for 0.0.0.0:8000 failed: port is already allocated", and a request to `:8000/api/evaluations` returned a 404 from a *different* app. `docker ps` + `/openapi.json` showed another local project's backend on 8000. Fix: the compose host port is now `${BACKEND_PORT:-8000}` (8000 by default; I run with `BACKEND_PORT=8001` in `.env`). The container still listens on 8000 internally.
 - **"Evidence" wasn't verbatim.** In the same smoke test the model's `evidence` field paraphrased ("Ra 3.2 is rougher than…", with curly quotes) instead of quoting the vendor text. This confirmed the code-side quote check is needed; the prompt must say "copy the exact sentence, nothing else".
 

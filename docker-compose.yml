@@ -16,3 +16,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  frontend:
+    build: ./frontend
+    environment:
+      # Inside the Compose network the backend is reachable by its service name.
+      VITE_PROXY_TARGET: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      backend:
+        condition: service_healthy

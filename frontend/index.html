@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AstroBase: Vendor Scoring</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>AstroBase</h1>
+        <p class="muted">Score a vendor profile against an RFQ. The AI judges each requirement; the score is computed from those judgements.</p>
+      </header>
+
+      <section class="card">
+        <h2>1. RFQ</h2>
+        <select id="rfq-select" aria-label="RFQ"></select>
+        <div id="rfq-details" class="rfq-details"></div>
+      </section>
+
+      <section class="card">
+        <h2>2. Vendor profile</h2>
+        <div class="row">
+          <label class="file-label">
+            Upload .txt
+            <input id="file-input" type="file" accept=".txt,text/plain" />
+          </label>
+          <span class="muted">or paste below</span>
+          <span id="char-count" class="muted right">0 characters</span>
+        </div>
+        <textarea id="vendor-text" rows="12" placeholder="Paste the vendor profile here..."></textarea>
+        <div class="row">
+          <button id="evaluate-btn" disabled>Evaluate</button>
+          <span id="status" class="muted"></span>
+        </div>
+        <p id="error" class="error" hidden></p>
+      </section>
+
+      <section id="result" class="card" hidden></section>
+
+      <section class="card">
+        <h2>Past evaluations</h2>
+        <div id="history"></div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
