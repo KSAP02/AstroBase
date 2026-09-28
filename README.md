@@ -28,13 +28,14 @@ cd AstroBase
 cp .env.example .env              # PowerShell: Copy-Item .env.example .env
 ```
 
-Edit `.env` and set at least these three values (no quotes, no inline comments):
+Edit `.env` and set your OpenAI key (no quotes, no inline comments):
 
 ```
 LLM_API_KEY=sk-...your key...
-LLM_MODEL=gpt-6-luna
-LLM_REASONING_EFFORT=low
 ```
+
+`.env.example` already sets `LLM_MODEL=gpt-6-luna` and `LLM_REASONING_EFFORT=low`; change them only
+if you want a different model.
 
 Then:
 
@@ -58,8 +59,8 @@ All live in the root `.env` (gitignored). `.env.example` lists every key.
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `LLM_API_KEY` | **yes** | – | OpenAI API key. Read only by the backend. |
-| `LLM_MODEL` | **yes** | – | Model id, e.g. `gpt-6-luna` (or `gpt-6-sol` for a stronger, pricier model) |
-| `LLM_REASONING_EFFORT` | no | model default | `none`, `low`, `medium`, `high`, `xhigh`. `low` is recommended (same results as `medium` in testing, about 2× faster). |
+| `LLM_MODEL` | **yes** | `gpt-6-luna` in `.env.example` | Model id, e.g. `gpt-6-luna` (or `gpt-6-sol` for a stronger, pricier model) |
+| `LLM_REASONING_EFFORT` | no | `low` in `.env.example` | `none`, `low`, `medium`, `high`, `xhigh`. `low` is recommended (same results as `medium` in testing, about 2× faster). |
 | `LLM_PROVIDER` | no | `openai` | Only `openai` is implemented |
 | `LLM_BASE_URL` | no | OpenAI's endpoint | Only for Azure OpenAI, a proxy or an OpenAI-compatible server |
 | `DB_PATH` | no | `data_warehouse/astrobase.db` | SQLite file, relative to the repo root |
@@ -85,7 +86,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows Git Bash: source .venv/Scripts/activate
                                      # PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env                 # then set LLM_API_KEY, LLM_MODEL, LLM_REASONING_EFFORT
+cp .env.example .env                 # then set LLM_API_KEY
 python -m backend.seed               # optional; also runs on startup
 uvicorn backend.main:app --reload --port 8000
 ```
