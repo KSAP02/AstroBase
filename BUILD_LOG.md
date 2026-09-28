@@ -46,6 +46,12 @@ mean something?
 
 What works. Be specific.
 
+**Backend (FastAPI + SQLite)**
+- `GET /api/rfqs`, `GET /api/rfqs/{id}`: RFQs from SQLite, seeded from `rfqs.json` on startup (or `python -m backend.seed`), idempotent.
+- `POST /api/evaluations`: one structured LLM call → per-requirement verdicts with verbatim quotes → score computed in code (quote check, 40/35/25 weights, mandatory gate capped at 30) → exactly 3 reasons and 2 gaps. Blank/oversized input → 422, unknown RFQ → 404, LLM not configured → 503, LLM call failed → 502.
+- Every evaluation is saved with the vendor text, all verdicts, the raw model output and token usage, the model id and the prompt version (audit trail); `GET /api/evaluations` lists them newest first. History survives restarts (DB on a host volume).
+- `docker compose up --build` runs it; host port configurable via `BACKEND_PORT`.
+
 ---
 
 ## What you skipped
@@ -68,6 +74,7 @@ and what did you do about it?
 - **Quantity, material and delivery** aren't in any tier in the JSON. Treated as technical lines, since "can they make enough, fast enough, in this material" is core capability.
 - **`not_applicable`**: some preferred lines have a precondition ("NADCAP subcontractors *for any outsourced steps*"). Added a verdict that removes the line from the average instead of scoring it 0. The model mostly returns `not_evidenced` there instead, which is the conservative choice.
 - **Lead-time basis**: vendor A quotes "from receipt of material" and RFQ-001 says "from PO" (material is free-issue). The prompt makes this at best `partial` unless reconciled.
+- **"Past evaluations are listed below, most recent first"**: all RFQs or only the selected one? Assumed all, newest first (`ORDER BY created_at DESC, id DESC`, limit 20), each row showing RFQ id, vendor and score. The spec says "past evaluations", not "past evaluations for this RFQ".
 - **"Seed data loads via a documented command or on first run"**: did both. The API seeds on startup, and `python -m backend.seed` does the same by hand. Both use `INSERT OR IGNORE`, so re-running never duplicates rows.
 
 ---

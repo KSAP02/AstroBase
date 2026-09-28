@@ -8,6 +8,7 @@ Two tables:
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.config import get_settings
@@ -87,3 +88,44 @@ def get_rfq(rfq_id: str) -> dict | None:
     with get_conn() as conn:
         row = conn.execute("SELECT data FROM rfqs WHERE id = ?", (rfq_id,)).fetchone()
     return json.loads(row["data"]) if row else None
+
+
+def insert_evaluation(evaluation: dict, vendor_text: str, raw: dict) -> tuple[int, str]:
+    """Save one evaluation. Returns (new id, created_at).
+
+    `evaluation` is what the API returns; `raw` is the model's own output and token usage,
+    kept in the same JSON column for auditing.
+    """
+    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO evaluations
+               (rfq_id, vendor_name, vendor_text, score, gate_passed, result, model, prompt_version, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                evaluation["rfq_id"],
+                evaluation["vendor_name"],
+                vendor_text,
+                evaluation["score"],
+                int(evaluation["gate_passed"]),
+                json.dumps({"evaluation": evaluation, "raw": raw}),
+                evaluation["model"],
+                evaluation["prompt_version"],
+                created_at,
+            ),
+        )
+    return cur.lastrowid, created_at
+
+
+def list_evaluations(limit: int = 20) -> list[dict]:
+    """Past evaluations, newest first, each shaped like the POST response (id + created_at included)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            # id breaks ties when two rows share the same second.
+            "SELECT id, created_at, result FROM evaluations ORDER BY created_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [
+        {**json.loads(row["result"])["evaluation"], "id": row["id"], "created_at": row["created_at"]}
+        for row in rows
+    ]

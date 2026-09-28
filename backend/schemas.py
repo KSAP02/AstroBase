@@ -77,6 +77,8 @@ class EvaluationRequest(BaseModel):
 
 
 class EvaluationOut(BaseModel):
+    id: int | None = None          # set once saved to the DB
+    created_at: str | None = None  # UTC ISO-8601, set once saved
     rfq_id: str
     vendor_name: str
     score: int

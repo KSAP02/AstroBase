@@ -2,7 +2,7 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from backend import db
 from backend.agents.evaluator import LLMCallError, evaluate_vendor
@@ -48,9 +48,17 @@ def create_evaluation(req: EvaluationRequest) -> EvaluationOut:
 
     # Translate failures into clear HTTP errors instead of a 500 with a traceback.
     try:
-        evaluation, _raw = evaluate_vendor(rfq, req.vendor_text)
+        evaluation, raw = evaluate_vendor(rfq, req.vendor_text)
     except LLMConfigError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except LLMCallError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    return evaluation
+
+    # Persist everything (incl. raw model output, model id, prompt version) for history and auditing.
+    eval_id, created_at = db.insert_evaluation(evaluation.model_dump(), req.vendor_text, raw)
+    return evaluation.model_copy(update={"id": eval_id, "created_at": created_at})
+
+
+@app.get("/api/evaluations")
+def list_evaluations(limit: int = Query(20, ge=1, le=100)) -> list[EvaluationOut]:
+    return db.list_evaluations(limit)
