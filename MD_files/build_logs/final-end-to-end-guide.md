@@ -398,3 +398,104 @@ config.py, db.py ◀── seed.py
 | Filter history by RFQ | `db.list_evaluations(limit, rfq_id)` + `main.list_evaluations` query param + `api.ts` | rebuild |
 | Add a 4th RFQ | append to `rfqs.json` | restart (seeding skips existing ids). Editing an existing RFQ needs a DB reset |
 | Any backend/frontend code change | – | `docker compose up --build` (no live reload in containers) |
+
+---
+
+## 7. Deep dive: how the model and the checks really work
+
+Answers to the questions worked through after the build, in the order a request actually flows.
+
+### 7.1 How the database is set up and used
+- **One SQLite file**, `data_warehouse/astrobase.db`. Its path comes from `config.py` (`db_path`, resolved from the repo root; `/app` in Docker, mapped to your disk by the volume).
+- **Two tables** (`db.py`, the `SCHEMA` string):
+  - `rfqs(id PK, title, category, data)`: three columns for the dropdown, plus the **whole RFQ as JSON** in `data`.
+  - `evaluations(...)`: one row per completed evaluation, with the full response and raw model output in `result`.
+- **Initialised automatically at startup** (`main.py` → `lifespan`): `db.init_db()` creates the folder and runs `CREATE TABLE IF NOT EXISTS` for both tables; `db.seed_rfqs()` reads `rfqs.json` and runs `INSERT OR IGNORE` for each RFQ (existing ids are skipped, so it's safe to repeat). The same two calls run by hand with `python -m backend.seed`.
+- **`get_conn()`** wraps every DB call: open → `row_factory = sqlite3.Row` (rows act like dicts) → foreign keys on → commit on success → always close.
+- After seeding, `rfqs.json` isn't used again: **the `rfqs` table is the source of truth**.
+
+### 7.2 What `yield` does (in `lifespan` and `get_conn`)
+`yield` **pauses** a function and hands control back; the function **resumes after `yield`** later. With `@asynccontextmanager` / `@contextmanager`, that becomes "setup → pause → cleanup":
+- `lifespan`: before `yield` = startup (tables + seed); **the pause = the server running**; after `yield` = shutdown (nothing needed).
+- `get_conn`: before = open the connection; `yield conn` = hand it to the `with` block; after = commit (on success) and **always** close.
+
+### 7.3 Flattening the RFQ into the prompt happens in memory, per request
+On every Evaluate click, inside the request:
+1. `main.py`: `rfq = db.get_rfq(id)` → the JSON from the `data` column becomes a Python dict.
+2. `evaluator.py`: `criteria = build_criteria(rfq)` → a list of `Criterion(id, tier, text)` (M1, T1…T6, R1, R2, P1…P3), deduped.
+3. The prompt files are read from `backend/prompts/`; `chain.invoke({...})` fills `{criteria_block}` with one line per criterion (`T1 [technical] Tolerance +/-0.02 mm…`), plus the RFQ id/title and the delimited vendor text, and sends it: **the one LLM call**.
+4. The **same in-memory list** is reused by `compute_score`, so scoring covers exactly the lines the model was shown.
+
+| Thing | Stored? |
+|---|---|
+| The RFQ | ✅ `rfqs.data` |
+| The flattened criteria list | ❌ rebuilt on every request (cheap, never stale) |
+| The filled-in prompt text | ❌ not saved (can be rebuilt from the RFQ, the saved vendor text, the prompt files and `prompt_version`) |
+| Each line's final verdict, quote, rationale | ✅ inside `evaluations.result` |
+| The model's raw answer and token usage | ✅ `evaluations.result.raw` |
+
+### 7.4 Who produces what
+
+| Piece | Produced by |
+|---|---|
+| Requirement lines (M1, T1 …) | **Code**: `build_criteria()` |
+| Verdict per line | **The LLM** |
+| Evidence quote per line | **The LLM**: copied from the vendor text in the prompt |
+| Rationale per line | **The LLM** |
+| 3 reasons, 2 gaps (first draft) | **The LLM** |
+| "Is the quote really in the profile?" | **Code**: `quote_found()` |
+| Final verdicts, score, gate, final reasons/gaps | **Code** |
+
+The UI's per-requirement table is the **LLM's judgement, audited by code**: verdict + quote + rationale from the model, with ⚠ where code overrode it.
+
+### 7.5 How the score is calculated, precisely
+- **Each tier's lines are averaged first, then multiplied by that tier's weight**, and the three results are added: `tier points = weight × (sum of points ÷ number of applicable lines)`. It's *not* weight × each line. Averaging keeps each tier worth exactly 40 / 35 / 25 however many lines it has (one RFQ-001 technical line ≈ 40 ÷ 6 = 6.7 points; one required line = 35 ÷ 2 = 17.5).
+- **Mandatory lines carry no points**; they only feed the gate.
+- **`not_evidenced` counts as 0 and stays in the average**, so it pulls the score down exactly like `not_met` ("not shown" is treated as "can't do"; otherwise a vendor could raise its score by saying less). **Only `not_applicable` is skipped** from the average.
+
+  Vendor A preferred: P1 met, P2 not_evidenced, P3 N/A → (1 + 0) ÷ 2 × 25 = **12.5**. If P2 were skipped it would be 25; if P3 were not_evidenced instead of N/A, 8.3 (this happened in a live run, one reason A's raw was 77 not 84).
+
+### 7.6 The gate cap is a ceiling, not normalisation
+```python
+score = raw_score if gate_passed else min(raw_score, GATE_CAP)   # GATE_CAP = 30
+```
+- The raw score is **blind to mandatory requirements** (they have no weight). Without the cap, vendor A would show **84** while being legally unusable for RFQ-001.
+- If any mandatory line isn't `met`, the final score **can't exceed 30**. Nothing is rescaled: 84 → 30, but 12 stays 12 and 0 stays 0.
+- **`raw_score` is kept for explanation only** (the UI banner: "capped at 30, would have been 77"). It distinguishes "strong but missing a certificate" from "weak across the board". Decisions use `score`.
+- **Why 30 and not 0:** with 0, vendor A and vendor C would both show 0. 30 is a policy value (one constant) meaning "clearly unsuitable, but not erased".
+
+### 7.7 `NEEDS_EVIDENCE` and the quote check
+`NEEDS_EVIDENCE = {"met", "partial"}`: the verdicts that **earn points**, so they must be proven. Negative verdicts earn nothing and aren't checked.
+
+**How the check works:** it's a Ctrl+F. Code already has the vendor text the user submitted. It normalises both the vendor text and the LLM's quote (lowercase, `±` → `+/-`, remove quote marks, collapse whitespace/line breaks, strip edge punctuation), splits the quote at `...`, and tests each piece with Python's substring operator (`piece in vendor_text`). Not found → `not_evidenced`, `downgraded=True` (⚠).
+
+Run on vendor A's real file (the tolerance sentence is split across two lines in the file):
+
+| LLM's quote | Found? | Result |
+|---|---|---|
+| `Routine working tolerance +/-0.01 mm on 5-axis work` | ✅ identical after normalising | stays met |
+| `“Routine working tolerance ±0.01 mm on 5-axis work.”` | ✅ quotes, `±`, full stop are harmless | stays met |
+| `Ra 0.8 is finer than the required Ra 1.6` | ❌ the model's own words | downgraded |
+| `tolerance of ±0.01mm` | ❌ reworded | downgraded |
+| `three DMG MORI 5-axis machines ... two Zeiss CONTURA CMMs` | ✅ each piece found | stays met |
+
+**Regex's role is small:** it only tidies text inside `normalise` (removing quote marks, squashing whitespace) and splits on `...`. The actual check is a plain substring search, not pattern matching.
+
+### 7.8 Every check code applies to the LLM's answer
+1. **Shape (schema, strict structured output):** all fields present, verdict ∈ 5 allowed values; unparseable → 502, nothing saved.
+2. **`apply_verdicts`** loops over **our** lines:
+   - invented or duplicate ids are ignored;
+   - a missing verdict becomes `not_evidenced`;
+   - a `met`/`partial` without a real quote becomes `not_evidenced`;
+   - a mandatory marked N/A becomes `not_met`.
+3. **Reasons and gaps:** reasons about unknown or downgraded lines are dropped; a failed mandatory line is forced to gap #1; both are padded to exactly 3 and 2.
+
+**What code cannot check:** whether a *real* quote justifies the verdict (e.g. "9 to 11 weeks" marked `partial` against "6 weeks from PO"). That relies on the prompt rules and a human reading the table.
+
+### 7.9 Why not ask the LLM whether its quote exists?
+- It's the suspect checking its own work: the model that paraphrased already "believes" it quoted correctly.
+- LLMs are weak at character-exact matching and tend to say "yes" for near-paraphrases, exactly the case to catch.
+- Code answers it with certainty, for free, in microseconds, the same way every time.
+- A second call breaks the SPEC's one-call rule; an in-call `quote_exists: true` field would be self-grading.
+
+Where an LLM check *would* add value is **judgement** ("does this real quote justify the verdict?"). That's handled by prompt rules inside the one call, and would be measured **offline** with a labelled evaluation set (the "Next 48 hours" plan), not with a second live call.
