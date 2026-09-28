@@ -199,6 +199,38 @@ lower `GATE_CAP` (e.g. 20 → A below B), or show `raw_score` next to the capped
 
 ---
 
+## Hand-made verdicts (sanity script) vs LLM verdicts (Step 3)
+
+`compute_score()` doesn't know or care where verdicts come from. It receives the same three
+arguments either way. What changes is who produces two of them:
+
+| Input | Sanity script (now) | Real app (Step 3) |
+|---|---|---|
+| `criteria` | Typed by hand (`RFQ_001 = [Criterion(...), ...]`) | `build_criteria(rfq)` from the RFQ JSON in SQLite |
+| `verdicts` | Typed by hand (`v("T1", "met", "...")`) | `LLMEvaluation.criteria` from the one LLM call |
+| `vendor_text` | Read from `samples/vendor-x.txt` | Whatever the user pasted or uploaded |
+
+What the LLM brings that hand-made verdicts don't:
+
+| LLM behaviour | What handles it |
+|---|---|
+| Paraphrases the evidence instead of copying it | `quote_found` → downgraded to `not_evidenced` (seen in the Step 0 smoke test) |
+| Invents a quote | Same quote check |
+| Skips a criterion id | `by_id.get()` → `None` → `not_evidenced` |
+| Returns an id we never sent (`"X9"`) | Ignored: we loop over *our* criteria, not the model's list |
+| Returns a verdict outside the 5 allowed | Impossible: `Literal` → JSON-schema `enum` → structured output rejects it |
+| Marks a mandatory line `not_applicable` | Forced to `not_met` |
+| Gives a **wrong verdict with a real quote** (e.g. "Ra 3.2" quoted, verdict `met`) | **Code can't catch this.** Only the prompt rubric and reading the 9-run table can |
+| Calls a vague sentence `met` ("Space-grade heritage.") | **Code can't catch this either** (the quote is real). Prompt's specificity rule |
+| Slightly different verdicts run to run (no temperature 0 on GPT-6) | Per-line judgements limit the swing: one line flipping `met` → `partial` moves the score by a few points, not 40 |
+| Also writes 3 reasons + 2 gaps | Not scored. Displayed, trimmed/padded to exactly 3/2 in Step 3 |
+| Costs money and time, can fail | ~$0.001 and a few seconds per call; failures → 502 with a clear message, no hidden retries |
+
+The sanity script tests **the maths given verdicts**. Step 3's 9-run table tests **whether the LLM's
+verdicts are right**. The two together justify the number.
+
+---
+
 ## Drills (try one, then rerun `python experiments/scoring_sanity.py`)
 - **A.** Change the gate from "cap at 30" to "score = 0". Which asserts break, and what would you update?
 - **B.** Make `partial` worth 0.6. What does vendor A's raw score become? (Answer: T5 → 0.6 → technical 36.8 → raw 84.3 → 84.)
