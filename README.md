@@ -159,6 +159,7 @@ data_warehouse/     seed/ (rfqs.json), samples/ (vendor profiles), astrobase.db 
 experiments/        scoring_sanity.py, run_matrix.py and their reports
 MD_files/           spec copy, design plan, step-by-step build explainers (build_logs/)
 BUILD_LOG.md        decisions, what broke, working with AI
+AI_SESSION_TRANSCRIPT.jsonl   the full Claude Code session that built this (one JSON record per line)
 ```
 
 ## Checks
