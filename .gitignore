@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Python
+astrobase_venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+dist/
+
+# Runtime data (the SQLite DB is created on first run)
+data_warehouse/*.db
+data_warehouse/*.db-journal
+
+# Personal Claude Code overrides
+.claude/settings.local.json
